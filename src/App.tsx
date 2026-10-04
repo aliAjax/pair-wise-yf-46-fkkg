@@ -9,9 +9,11 @@ import { z } from "zod";
 import { useTranslation } from "react-i18next";
 import { NavLink, Route, Routes } from "react-router-dom";
 import { SortableItem } from "./components/SortableItem";
-import { useGetRundownQuery, useSaveRundownMutation } from "./store/api";
+import AdLedgerPage from "./components/AdLedgerPage";
+import { useGetRundownQuery, useSaveRundownMutation, useGetAdLedgerQuery, useSaveAdLedgerMutation } from "./store/api";
 import { useAppDispatch, useAppSelector } from "./store/hooks";
 import { addItem, adjustDuration, initialize, insertBreaking, queueChange, reorder, setOnline, setRole, skipItem, syncQueue, undo, updateStatus } from "./store/rundownSlice";
+import { loadLedger, recordLocalBroadcast, syncContracts } from "./store/adLedgerSlice";
 import type { ItemType, Role, RundownItem } from "./types";
 
 const schema = z.object({ title: z.string().min(2), type: z.enum(["新闻片", "连线", "嘉宾", "口播", "广告"]), duration: z.number().min(1).max(120), presenter: z.string().min(1), source: z.string().min(1) });
@@ -47,7 +49,8 @@ function RundownPage() {
   };
 
   const submit = (values: FormValues) => {
-    dispatch(addItem(values));
+    const id = crypto.randomUUID();
+    dispatch(addItem({ ...values, id }));
     if (!online) dispatch(queueChange({ action: "新增条目", detail: values.title }));
     reset();
   };
@@ -58,7 +61,13 @@ function RundownPage() {
       <div className="summary"><span><b>{items.length}</b> 条内容</span><span><b>{total}</b> 分钟总时长</span><span className={overrun.length ? "danger-text" : ""}><b>{overrun.length}</b> 个硬时间风险</span><span><b>{timeline.at(-1)?.at ?? "--:--"}</b> 预计收播</span></div>
       <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
         <SortableContext items={items.map((item) => item.id)} strategy={verticalListSortingStrategy}>
-          <div className="rundown-list">{timeline.map(({ item, at }) => <SortableItem key={item.id} item={item} cumulative={at} onDuration={(delta) => dispatch(adjustDuration({ id: item.id, delta }))} onStatus={() => dispatch(updateStatus({ id: item.id, status: "已播出" }))} onSkip={() => dispatch(skipItem(item.id))} />)}</div>
+          <div className="rundown-list">{timeline.map(({ item, at }) => <SortableItem key={item.id} item={item} cumulative={at} onDuration={(delta) => dispatch(adjustDuration({ id: item.id, delta }))} onStatus={() => {
+            dispatch(updateStatus({ id: item.id, status: "已播出" }));
+            if (item.type === "广告") {
+              const base = new Date(`2026-10-08T${at}:00`);
+              dispatch(recordLocalBroadcast({ itemId: item.id, plannedStart: at, actualStart: at, actualEnd: format(addMinutes(base, item.duration), "HH:mm") }));
+            }
+          }} onSkip={() => dispatch(skipItem(item.id))} />)}</div>
         </SortableContext>
       </DndContext>
     </Card>
@@ -104,16 +113,23 @@ function dispatchSync() {
 export default function App() {
   const dispatch = useAppDispatch();
   const state = useAppSelector((root) => root.rundown);
+  const ledger = useAppSelector((root) => root.adLedger);
+  const items = useAppSelector((root) => root.rundown.items);
   const { data = [] } = useGetRundownQuery();
+  const { data: ledgerData } = useGetAdLedgerQuery();
+  const saveLedger = useSaveAdLedgerMutation()[0];
   const { t, i18n } = useTranslation();
   useEffect(() => { if (data.length) dispatch(initialize(data)); }, [data, dispatch]);
+  useEffect(() => { if (ledgerData) dispatch(loadLedger(ledgerData)); }, [ledgerData, dispatch]);
+  useEffect(() => { dispatch(syncContracts(items)); }, [items, ledgerData, dispatch]);
+  useEffect(() => { const timer = setTimeout(() => saveLedger(ledger), 300); return () => clearTimeout(timer); }, [ledger, saveLedger]);
   useEffect(() => {
     const handler = () => { dispatch(syncQueue()); message.success("应急队列已同步"); };
     window.addEventListener("sync-queue", handler);
     return () => window.removeEventListener("sync-queue", handler);
   }, [dispatch]);
   return <div className="app-shell">
-    <aside className="sidebar"><div className="brand"><span>LIVE</span><div><b>{t("title")}</b><small>Control room</small></div></div><nav><NavLink to="/">{t("rundown")}</NavLink><NavLink to="/changes">{t("changes")}</NavLink><NavLink to="/queue">{t("queue")} {state.queue.length ? <em>{state.queue.length}</em> : null}</NavLink></nav><Button ghost onClick={() => void i18n.changeLanguage(i18n.language === "zh" ? "en" : "zh")}>{i18n.language === "zh" ? "EN" : "中文"}</Button></aside>
-    <main><header className="topbar"><div><small>直播运行中 · 紧急操作均保留审计记录</small><h1>{t("title")}</h1></div><div className="top-actions"><label>在线模式 <Switch checked={state.online} onChange={(value) => dispatch(setOnline(value))} /></label><label>当前岗位 <Select<Role> value={state.role} onChange={(value) => dispatch(setRole(value))} options={[{value:"导播"},{value:"主编"},{value:"字幕"},{value:"演播室"}]} /></label></div></header><Routes><Route path="/" element={<RundownPage />} /><Route path="/changes" element={<ChainPage mode="changes" />} /><Route path="/queue" element={<ChainPage mode="queue" />} /><Route path="/history" element={<ChainPage mode="history" />} /></Routes></main>
+    <aside className="sidebar"><div className="brand"><span>LIVE</span><div><b>{t("title")}</b><small>Control room</small></div></div><nav><NavLink to="/">{t("rundown")}</NavLink><NavLink to="/changes">{t("changes")}</NavLink><NavLink to="/ledger">{t("ledger")}</NavLink><NavLink to="/queue">{t("queue")} {state.queue.length ? <em>{state.queue.length}</em> : null}</NavLink></nav><Button ghost onClick={() => void i18n.changeLanguage(i18n.language === "zh" ? "en" : "zh")}>{i18n.language === "zh" ? "EN" : "中文"}</Button></aside>
+    <main><header className="topbar"><div><small>直播运行中 · 紧急操作均保留审计记录</small><h1>{t("title")}</h1></div><div className="top-actions"><label>在线模式 <Switch checked={state.online} onChange={(value) => dispatch(setOnline(value))} /></label><label>当前岗位 <Select<Role> value={state.role} onChange={(value) => dispatch(setRole(value))} options={[{value:"导播"},{value:"主编"},{value:"字幕"},{value:"演播室"}]} /></label></div></header><Routes><Route path="/" element={<RundownPage />} /><Route path="/changes" element={<ChainPage mode="changes" />} /><Route path="/ledger" element={<AdLedgerPage />} /><Route path="/queue" element={<ChainPage mode="queue" />} /><Route path="/history" element={<ChainPage mode="history" />} /></Routes></main>
   </div>;
 }

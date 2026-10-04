@@ -1,12 +1,13 @@
 import { createApi, fakeBaseQuery } from "@reduxjs/toolkit/query/react";
-import type { RundownItem } from "../types";
+import type { AdLedgerState, RundownItem } from "../types";
 
 const KEY = "pair-wise-yf-46/rundown";
+const LEDGER_KEY = "pair-wise-yf-46/ad-ledger";
 
 export const rundownApi = createApi({
   reducerPath: "rundownApi",
   baseQuery: fakeBaseQuery(),
-  tagTypes: ["Rundown"],
+  tagTypes: ["Rundown", "AdLedger"],
   endpoints: (builder) => ({
     getRundown: builder.query<RundownItem[], void>({
       queryFn: async () => {
@@ -21,8 +22,22 @@ export const rundownApi = createApi({
         return { data: { ok: true } };
       },
       invalidatesTags: ["Rundown"]
+    }),
+    getAdLedger: builder.query<AdLedgerState | null, void>({
+      queryFn: async () => {
+        const raw = localStorage.getItem(LEDGER_KEY);
+        return { data: raw ? JSON.parse(raw) as AdLedgerState : null };
+      },
+      providesTags: ["AdLedger"]
+    }),
+    saveAdLedger: builder.mutation<{ ok: true }, AdLedgerState>({
+      queryFn: async (ledger) => {
+        localStorage.setItem(LEDGER_KEY, JSON.stringify(ledger));
+        return { data: { ok: true } };
+      },
+      invalidatesTags: ["AdLedger"]
     })
   })
 });
 
-export const { useGetRundownQuery, useSaveRundownMutation } = rundownApi;
+export const { useGetRundownQuery, useSaveRundownMutation, useGetAdLedgerQuery, useSaveAdLedgerMutation } = rundownApi;

@@ -36,9 +36,9 @@ const slice = createSlice({
     },
     setRole(state, action: PayloadAction<Role>) { state.role = action.payload; },
     setOnline(state, action: PayloadAction<boolean>) { state.online = action.payload; },
-    addItem(state, action: PayloadAction<Omit<RundownItem, "id" | "status">>) {
+    addItem(state, action: PayloadAction<Omit<RundownItem, "status">>) {
       state.history.unshift(snapshot(state.items, "新增条目", action.payload.title));
-      state.items.push({ ...action.payload, id: crypto.randomUUID(), status: "草稿" });
+      state.items.push({ ...action.payload, status: "草稿" });
     },
     updateStatus(state, action: PayloadAction<{ id: string; status: RundownItem["status"] }>) {
       const item = state.items.find((entry) => entry.id === action.payload.id);
